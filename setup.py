@@ -1,20 +1,18 @@
 """
-setup.py for the outlook Hermes plugin.
+setup.py for hermes-plugin-outlook.
 
 Usage:
     ./setup.sh install [--yes]   # Install (symlink, enable, store creds)
     ./setup.sh remove  [--yes]   # Uninstall (remove symlink, disable plugin)
     ./setup.sh status            # Show current install/credential state
-    ./setup.sh creds  [--yes]    # Re-enter or update stored credentials
+    ./setup.sh creds   [--yes]   # Re-enter or update stored credentials
     ./setup.sh log debug         # Enable DEBUG logging (requires Hermes restart)
     ./setup.sh log quiet         # Disable debug logging (back to WARNING)
     ./setup.sh log status        # Show current log level setting
 
-Credentials stored (all in keychain service 'hermes-outlook'):
-    email          - Robert Half email address (mattwo01@roberthalf.com)
-    tenant_id      - Azure AD Tenant ID
-    client_id      - OAuth2 Client ID (Outlook Web first-party app)
-    refresh_token  - M365 SPA refresh token (auto-rotated; 24-hour lifetime)
+Credentials are stored in macOS Keychain under service "hermes-outlook".
+The refresh token is obtained by extracting it from the browser's MSAL cache
+(see README.md for instructions).
 """
 
 import argparse
@@ -22,61 +20,59 @@ import os
 import sys
 from pathlib import Path
 
-from ruamel.yaml import YAML  # preserves comments and key order
+from ruamel.yaml import YAML
 import keyring
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-PLUGIN_NAME       = "outlook"
-KEYCHAIN_SERVICE  = "hermes-outlook"
+PLUGIN_NAME      = "outlook"
+KEYCHAIN_SERVICE = "hermes-outlook"
 
-HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-PLUGINS_DIR = HERMES_HOME / "plugins"
-CONFIG_FILE = HERMES_HOME / "config.yaml"
+HERMES_HOME  = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+PLUGINS_DIR  = HERMES_HOME / "plugins"
+CONFIG_FILE  = HERMES_HOME / "config.yaml"
 
 REPO_DIR    = Path(__file__).resolve().parent
 PLUGIN_LINK = PLUGINS_DIR / PLUGIN_NAME
 
-# Credential keys stored in Keychain.
+# Credentials stored in Keychain
 KEYS = ["email", "tenant_id", "client_id", "refresh_token"]
 
 CRED_PROMPTS = {
     "email": {
-        "label":     "Robert Half email address (e.g. mattwo01@roberthalf.com)",
+        "label":     "Your Outlook email address (e.g. mattwo01@roberthalf.com)",
         "default":   "mattwo01@roberthalf.com",
         "is_secret": False,
     },
     "tenant_id": {
-        "label":     "Azure AD Tenant ID (from browser devtools — see SKILL.md)",
+        "label":     "Azure AD Tenant ID (extract from browser — see README)",
         "default":   "",
-        "is_secret": True,
+        "is_secret": False,
     },
     "client_id": {
-        "label":     "OAuth2 Client ID (Outlook Web first-party — see SKILL.md)",
+        "label":     "OAuth2 Client ID (extract from browser — see README)",
         "default":   "",
-        "is_secret": True,
+        "is_secret": False,
     },
     "refresh_token": {
-        "label":     "M365 SPA refresh token (from browser devtools — see SKILL.md)",
+        "label":     "Outlook refresh token (extract from browser MSAL cache — see README)",
         "default":   "",
         "is_secret": True,
     },
 }
 
-_KEYCHAIN_CACHE: dict[str, str | None] = {}
+_KEYCHAIN_CACHE: dict = {}
 
 
 # ── Keychain helpers ──────────────────────────────────────────────────────────
 
 def _keychain_store(key: str, value: str) -> None:
-    """Store a credential in macOS Keychain."""
     keyring.set_password(KEYCHAIN_SERVICE, key, value)
     _KEYCHAIN_CACHE[key] = value
 
 
-def _keychain_read(key: str) -> str | None:
-    """Read a credential from macOS Keychain. Returns None if not found."""
+def _keychain_read(key: str):
     if key in _KEYCHAIN_CACHE:
         return _KEYCHAIN_CACHE[key]
     val = keyring.get_password(KEYCHAIN_SERVICE, key)
@@ -85,7 +81,6 @@ def _keychain_read(key: str) -> str | None:
 
 
 def _keychain_delete(key: str) -> None:
-    """Delete a credential from macOS Keychain. Silent if not found."""
     try:
         keyring.delete_password(KEYCHAIN_SERVICE, key)
     except Exception:
@@ -93,25 +88,21 @@ def _keychain_delete(key: str) -> None:
     _KEYCHAIN_CACHE.pop(key, None)
 
 
-def _prompt_cred(key: str, existing: str | None = None) -> str:
-    """Prompt user for a credential value. Masks input if is_secret."""
+def _prompt_cred(key: str, existing=None) -> str:
     info    = CRED_PROMPTS.get(key, {"label": key, "default": "", "is_secret": False})
     label   = info["label"]
     default = existing or info.get("default", "")
-    hint    = f" [{default[:4]}{'...' if len(default) > 4 else ''}]" if default else ""
-
+    hint    = f" [{default[:6]}{'...' if len(default) > 6 else ''}]" if default else ""
     if info.get("is_secret"):
         import getpass
         value = getpass.getpass(f"  {label}{hint}: ").strip()
     else:
         value = input(f"  {label}{hint}: ").strip()
-
     return value or default
 
 
-def cred_status() -> dict[str, bool]:
-    """Return {key: stored?} for all KEYS."""
-    return {k: _keychain_read(k) is not None for k in KEYS}
+def cred_status() -> dict:
+    return {k: (_keychain_read(k) is not None) for k in KEYS}
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -123,7 +114,7 @@ def _read_config():
         return yaml.load(f), yaml
 
 
-def _write_config(data, yaml):
+def _write_config(data, yaml) -> None:
     with open(CONFIG_FILE, "w") as f:
         yaml.dump(data, f)
 
@@ -171,9 +162,9 @@ def _finish_install():
 
 
 def cmd_status():
-    print(f"\n{'─'*50}")
+    print(f"\n{'─'*55}")
     print(f" Status: {PLUGIN_NAME} plugin")
-    print(f"{'─'*50}")
+    print(f"{'─'*55}")
 
     link_ok    = PLUGIN_LINK.is_symlink() and PLUGIN_LINK.resolve() == REPO_DIR
     enabled_ok = _is_enabled()
@@ -186,21 +177,65 @@ def cmd_status():
         print(f"  Cred [{key:16s}]: {'✓' if stored else '✗ NOT STORED'}")
 
     print()
-    if link_ok and enabled_ok and all(cred_status().values()):
+    if link_ok and enabled_ok and all(creds.values()):
         print("  ✅ Ready — restart Hermes to activate the plugin.")
     else:
         print("  ❌ Run: ./setup.sh install")
     print()
 
-    print("  ⚠️  SPA refresh tokens expire after 24 hours of inactivity.")
-    print("      If tokens expire, re-extract from browser and run: ./setup.sh creds")
-    print()
+    # Smoke test: try a token refresh if all creds are present
+    if link_ok and enabled_ok and all(creds.values()):
+        print("  Running connectivity check...")
+        _smoke_test()
+
+
+def _smoke_test():
+    """Attempt a token refresh to verify credentials are valid."""
+    import json
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+
+    creds = {k: _keychain_read(k) for k in KEYS}
+    params = urllib.parse.urlencode({
+        "client_id":     creds["client_id"],
+        "grant_type":    "refresh_token",
+        "refresh_token": creds["refresh_token"],
+        "scope":         "https://outlook.office.com/.default offline_access",
+    }).encode()
+
+    req = urllib.request.Request(
+        f"https://login.microsoftonline.com/{creds['tenant_id']}/oauth2/v2.0/token",
+        data=params, method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin":       "https://outlook.office.com",
+            "User-Agent":   "Mozilla/5.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+        if "access_token" in data:
+            print("  ✅ Token refresh successful — plugin is functional.")
+        else:
+            err = data.get("error", "unknown")
+            print(f"  ⚠️  Token response OK but no access_token: {err}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            err = json.loads(body)
+            print(f"  ✗ Token refresh failed: HTTP {e.code} — {err.get('error', '')} — {err.get('error_description', '')[:100]}")
+        except Exception:
+            print(f"  ✗ Token refresh failed: HTTP {e.code} — {body[:150]}")
+    except Exception as e:
+        print(f"  ✗ Connectivity check failed: {e}")
 
 
 def cmd_install(yes: bool = False):
     print(f"\nInstalling {PLUGIN_NAME} plugin...")
 
-    # 1. Create plugin symlink
+    # 1. Symlink
     PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
     if PLUGIN_LINK.is_symlink():
         if PLUGIN_LINK.resolve() == REPO_DIR:
@@ -216,14 +251,15 @@ def cmd_install(yes: bool = False):
         PLUGIN_LINK.symlink_to(REPO_DIR)
         print(f"  ✓ Symlink created: {PLUGIN_LINK} → {REPO_DIR}")
 
-    # 2. Enable plugin in config.yaml
+    # 2. Enable in config.yaml
     _enable_plugin()
 
-    # 3. Store credentials
+    # 3. Credentials
     existing_creds = cred_status()
     all_stored     = all(existing_creds.values())
 
     if all_stored and yes:
+        print("  ✓ All credentials already stored. Skipping re-entry (--yes).")
         _finish_install()
         return
 
@@ -235,8 +271,6 @@ def cmd_install(yes: bool = False):
             return
 
     print("\n  Enter credentials (leave blank to keep existing value):\n")
-    print("  See SKILL.md → 'Credential Setup' for instructions on extracting")
-    print("  tenant_id, client_id, and refresh_token from your browser.\n")
     for key in KEYS:
         existing = _keychain_read(key)
         value    = _prompt_cred(key, existing)
@@ -267,19 +301,18 @@ def cmd_remove(yes: bool = False):
 
     _disable_plugin()
 
-    ans = input("\n  Also delete stored credentials from Keychain? [y/N]: ").strip().lower()
-    if ans == "y":
-        for key in KEYS:
-            _keychain_delete(key)
-        print("  ✓ Credentials removed from Keychain.")
+    if not yes:
+        ans = input("\n  Also delete stored credentials from Keychain? [y/N]: ").strip().lower()
+        if ans == "y":
+            for key in KEYS:
+                _keychain_delete(key)
+            print("  ✓ Credentials removed from Keychain.")
 
     print(f"\n  ✅ {PLUGIN_NAME} plugin removed. Restart Hermes to deactivate.\n")
 
 
 def cmd_creds(yes: bool = False):
     print(f"\nUpdating credentials for {PLUGIN_NAME}...\n")
-    print("  See SKILL.md → 'Credential Setup' for instructions on extracting")
-    print("  tenant_id, client_id, and refresh_token from your browser.\n")
     for key in KEYS:
         existing = _keychain_read(key)
         value    = _prompt_cred(key, existing)
@@ -293,7 +326,7 @@ def cmd_creds(yes: bool = False):
     print()
 
 
-# ── Log level management ──────────────────────────────────────────────────────
+# ── Log management ────────────────────────────────────────────────────────────
 
 def cmd_log(action: str = "status"):
     if not _is_enabled():
@@ -317,8 +350,7 @@ def cmd_log(action: str = "status"):
         if PLUGIN_NAME not in data["plugins"]["config"] or data["plugins"]["config"][PLUGIN_NAME] is None:
             data["plugins"]["config"][PLUGIN_NAME] = CommentedMap()
         if level_or_none is None:
-            if "log_level" in data["plugins"]["config"][PLUGIN_NAME]:
-                del data["plugins"]["config"][PLUGIN_NAME]["log_level"]
+            data["plugins"]["config"][PLUGIN_NAME].pop("log_level", None)
         else:
             data["plugins"]["config"][PLUGIN_NAME]["log_level"] = level_or_none
         _write_config(data, yaml)
@@ -365,8 +397,7 @@ def main():
     creds_p.add_argument("--yes", "-y", action="store_true")
 
     log_p = sub.add_parser("log", help="Manage plugin log level")
-    log_p.add_argument("log_action", nargs="?",
-                       choices=["debug", "quiet", "status"], default="status")
+    log_p.add_argument("log_action", nargs="?", choices=["debug", "quiet", "status"], default="status")
 
     args = parser.parse_args()
 

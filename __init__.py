@@ -1,101 +1,101 @@
 """
-Hermes plugin entry point for the outlook plugin.
+hermes-plugin-outlook — Microsoft Outlook (M365) email and calendar plugin for Hermes Agent.
 
-Hermes calls register(ctx) once at startup. Keep this file thin —
-all logic lives in tools.py and schemas.py.
+Entry point called by Hermes when the plugin is loaded.
+Registers all tool schemas and their handler functions with the plugin context.
 """
 
 import logging
 import os
+import sys
 from pathlib import Path
 
-from . import schemas, tools
+# Make scripts/ available for keychain_utils, date_utils, logging_utils
+sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 
-_SKILL_MD  = Path(__file__).parent / "SKILL.md"
-_PLUGIN_DIR = Path(__file__).parent
+
+PLUGIN_NAME = "outlook"
 
 
 def _get_log_level() -> str:
-    """
-    Read plugins.config.outlook.log_level from config.yaml.
-    Falls back to WARNING on any error.
-
-    Set via: ./setup.sh log debug|quiet
-    Applied at Hermes startup — requires restart to take effect.
-    """
+    """Read log level from plugins.config.outlook.log_level in config.yaml."""
     try:
-        from ruamel.yaml import YAML
         hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-        config_yaml = hermes_home / "config.yaml"
-        if not config_yaml.exists():
+        config_file = hermes_home / "config.yaml"
+        if not config_file.exists():
             return "WARNING"
+        from ruamel.yaml import YAML
         yaml = YAML()
-        with open(config_yaml) as f:
-            data = yaml.load(f) or {}
+        with open(config_file) as f:
+            data = yaml.load(f)
         plugins = data.get("plugins") or {}
         config  = plugins.get("config") or {}
-        plugin  = config.get("outlook") or {}
-        return str(plugin.get("log_level") or "WARNING").upper()
+        plugin  = config.get(PLUGIN_NAME) or {}
+        return plugin.get("log_level", "WARNING")
     except Exception:
         return "WARNING"
 
 
-def register(ctx) -> None:
-    """Register all outlook tools and the bundled skill with the Hermes plugin context."""
+def setup(ctx):
+    """
+    Called by Hermes when the plugin is loaded.
+    Registers all tool schemas + handlers with the plugin context.
+    """
+    from logging_utils import setup_logging
+    log = setup_logging(PLUGIN_NAME, _get_log_level())
+    log.debug("outlook plugin: setup() called")
 
-    # Configure logging — level set by `./setup.sh log debug|quiet`
-    # Reads plugins.config.outlook.log_level from config.yaml.
-    import sys as _sys
-    _scripts = Path(__file__).parent / "scripts"
-    if str(_scripts) not in _sys.path:
-        _sys.path.insert(0, str(_scripts))
-    from logging_utils import setup_logging  # noqa: E402
-    setup_logging("outlook", _get_log_level())
+    # ── Import schemas and tools ──────────────────────────────────────────────
+    from schemas import (
+        PING,
+        LIST_EMAILS, READ_EMAIL, SEARCH_EMAILS, LIST_FOLDERS,
+        MARK_READ, MOVE_EMAIL, SEND_EMAIL, REPLY_EMAIL, FORWARD_EMAIL,
+        LIST_EVENTS, GET_EVENT, SEARCH_EVENTS, CREATE_EVENT, UPDATE_EVENT,
+        DELETE_EVENT, RESPOND_EVENT, GET_ATTENDEE_STATUS, FIND_MEETING_TIMES,
+        LIST_CALENDARS, GET_SCHEDULE, ADD_ATTENDEES, REMOVE_ATTENDEES,
+    )
+    from tools import (
+        outlook_ping,
+        outlook_list_emails, outlook_read_email, outlook_search_emails, outlook_list_folders,
+        outlook_mark_read, outlook_move_email, outlook_send_email, outlook_reply_email,
+        outlook_forward_email,
+        outlook_list_events, outlook_get_event, outlook_search_events, outlook_create_event,
+        outlook_update_event, outlook_delete_event, outlook_respond_event,
+        outlook_get_attendee_status, outlook_find_meeting_times,
+        outlook_list_calendars, outlook_get_schedule, outlook_add_attendees, outlook_remove_attendees,
+    )
 
-    # ------------------------------------------------------------------
-    # IMPORTANT: ctx.register_tool() requires BOTH name= and toolset=
-    # as positional-or-keyword arguments. Passing schema= alone causes
-    # a silent failure — the plugin appears "enabled" but registers
-    # ZERO tools. Always use the explicit form below.
-    # ------------------------------------------------------------------
-    _REGISTRY = [
-        (schemas.PING,                 tools.outlook_ping),
+    # ── Register tools ────────────────────────────────────────────────────────
+    pairs = [
+        (PING,               outlook_ping),
         # Email
-        (schemas.LIST_EMAILS,          tools.outlook_list_emails),
-        (schemas.READ_EMAIL,           tools.outlook_read_email),
-        (schemas.SEARCH_EMAILS,        tools.outlook_search_emails),
-        (schemas.LIST_FOLDERS,         tools.outlook_list_folders),
-        (schemas.MARK_READ,            tools.outlook_mark_read),
-        (schemas.MOVE_EMAIL,           tools.outlook_move_email),
-        (schemas.SEND_EMAIL,           tools.outlook_send_email),
-        (schemas.REPLY_EMAIL,          tools.outlook_reply_email),
-        (schemas.FORWARD_EMAIL,        tools.outlook_forward_email),
+        (LIST_EMAILS,        outlook_list_emails),
+        (READ_EMAIL,         outlook_read_email),
+        (SEARCH_EMAILS,      outlook_search_emails),
+        (LIST_FOLDERS,       outlook_list_folders),
+        (MARK_READ,          outlook_mark_read),
+        (MOVE_EMAIL,         outlook_move_email),
+        (SEND_EMAIL,         outlook_send_email),
+        (REPLY_EMAIL,        outlook_reply_email),
+        (FORWARD_EMAIL,      outlook_forward_email),
         # Calendar
-        (schemas.LIST_EVENTS,          tools.outlook_list_events),
-        (schemas.GET_EVENT,            tools.outlook_get_event),
-        (schemas.SEARCH_EVENTS,        tools.outlook_search_events),
-        (schemas.CREATE_EVENT,         tools.outlook_create_event),
-        (schemas.UPDATE_EVENT,         tools.outlook_update_event),
-        (schemas.DELETE_EVENT,         tools.outlook_delete_event),
-        (schemas.RESPOND_EVENT,        tools.outlook_respond_event),
-        (schemas.GET_ATTENDEE_STATUS,  tools.outlook_get_attendee_status),
-        (schemas.FIND_MEETING_TIMES,   tools.outlook_find_meeting_times),
-        (schemas.LIST_CALENDARS,       tools.outlook_list_calendars),
-        (schemas.GET_SCHEDULE,         tools.outlook_get_schedule),
-        (schemas.ADD_ATTENDEES,        tools.outlook_add_attendees),
-        (schemas.REMOVE_ATTENDEES,     tools.outlook_remove_attendees),
+        (LIST_EVENTS,        outlook_list_events),
+        (GET_EVENT,          outlook_get_event),
+        (SEARCH_EVENTS,      outlook_search_events),
+        (CREATE_EVENT,       outlook_create_event),
+        (UPDATE_EVENT,       outlook_update_event),
+        (DELETE_EVENT,       outlook_delete_event),
+        (RESPOND_EVENT,      outlook_respond_event),
+        (GET_ATTENDEE_STATUS,  outlook_get_attendee_status),
+        (FIND_MEETING_TIMES,   outlook_find_meeting_times),
+        (LIST_CALENDARS,     outlook_list_calendars),
+        (GET_SCHEDULE,       outlook_get_schedule),
+        (ADD_ATTENDEES,      outlook_add_attendees),
+        (REMOVE_ATTENDEES,   outlook_remove_attendees),
     ]
 
-    for schema, handler in _REGISTRY:
-        ctx.register_tool(
-            name=schema["name"],  # ← REQUIRED — do not omit
-            toolset="outlook",    # ← REQUIRED — do not omit
-            schema=schema,
-            handler=handler,
-        )
+    for schema, handler in pairs:
+        ctx.register_tool(schema=schema, handler=handler)
+        log.debug("outlook: registered tool %s", schema["name"])
 
-    # Register the bundled skill so agents can load it via
-    # skill_view(name="outlook:outlook")
-    # No ~/.hermes/skills/ symlink needed.
-    if _SKILL_MD.exists():
-        ctx.register_skill("outlook", _SKILL_MD)
+    log.info("outlook plugin: %d tools registered", len(pairs))

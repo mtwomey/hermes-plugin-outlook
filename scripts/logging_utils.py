@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """
-logging_utils.py — Shared logging setup for Hermes plugins and MCP skill servers.
+logging_utils.py — Shared logging setup for Hermes MCP skill servers.
 
-Bundled copy — each plugin/skill repo carries its own copy so it is fully self-contained.
-Copy this file into scripts/ of any new plugin or MCP skill.
+Bundled copy — each skill repo carries its own copy so it is fully self-contained.
+Copy this file into scripts/ of any new MCP skill.
 
-Usage in a native plugin (__init__.py):
+Usage in a server:
+    import sys, argparse
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
     from logging_utils import setup_logging
-    log = setup_logging("<plugin-name>", _get_log_level())
 
-    # Then in tools.py (get the same logger by name):
-    import logging
-    log = logging.getLogger("<plugin-name>")
-    log.debug("tool called: arg=%s", value)
-    log.error("call failed: %s", e)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log-level", default="WARNING",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    args, _ = parser.parse_known_args()   # parse_known_args — FastMCP adds its own args
+
+    log = setup_logging("<tool-name>", args.log_level)
+
+    # Then in tools:
+    log.debug("list_emails called: label=%s limit=%s", label, limit)
+    log.error("API call failed: %s", e)
 
 Log file location:  ~/.hermes/logs/<tool_name>.log
 Log rotation:       5 MB per file, 3 backups kept  (so max ~20 MB on disk)
 Default level:      WARNING  (silent in normal operation)
-
-Toggle (native plugin):
-                    ./setup.sh log debug   →  sets plugins.config.<key>.log_level=DEBUG in config.yaml
-                    ./setup.sh log quiet   →  removes plugins.config.<key>.log_level from config.yaml
-                    __init__.py reads the level at startup via _get_log_level()
+Toggle:             ./setup.sh log debug   →  adds --log-level DEBUG to config.yaml args
+                    ./setup.sh log quiet   →  removes --log-level arg from config.yaml args
                     (both require a Hermes restart to take effect)
 
 IMPORTANT: Never log to stdout — stdout is the MCP JSON-RPC wire.
@@ -37,10 +41,10 @@ from pathlib import Path
 
 def setup_logging(tool_name: str, level: str = "WARNING") -> logging.Logger:
     """
-    Configure and return a logger for a Hermes plugin or MCP server.
+    Configure and return a logger for an MCP server tool.
 
     Args:
-        tool_name:  Short name used for the log file, e.g. "outlook".
+        tool_name:  Short name used for the log file, e.g. "google", "databricks".
                     Log file will be at ~/.hermes/logs/<tool_name>.log
         level:      Logging level string: DEBUG | INFO | WARNING | ERROR | CRITICAL.
                     Default WARNING (quiet in normal operation).
@@ -52,7 +56,7 @@ def setup_logging(tool_name: str, level: str = "WARNING") -> logging.Logger:
 
     # --- log directory -------------------------------------------------------
     hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-    log_dir     = hermes_home / "logs"
+    log_dir = hermes_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{tool_name}.log"
 
