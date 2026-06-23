@@ -36,7 +36,7 @@ def _get_log_level() -> str:
         return "WARNING"
 
 
-def setup(ctx):
+def register(ctx):
     """
     Called by Hermes when the plugin is loaded.
     Registers all tool schemas + handlers with the plugin context.
