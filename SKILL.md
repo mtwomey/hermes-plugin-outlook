@@ -159,20 +159,58 @@ Credentials are stored in macOS Keychain under service name `hermes-outlook`.
 
 ### Extracting from browser (one-time setup)
 
-1. Log into https://outlook.office.com in Chrome/Edge
-2. Open DevTools → Application → Storage → Session Storage → `https://outlook.office.com`
-3. Find the key matching pattern `.*login.microsoftonline.com.*` — the value is a JSON blob
-4. Inside that blob find `"tenantId"` → copy as `tenant_id`
-5. Find `"clientId"` → copy as `client_id`
-6. Find `"secret"` under a key containing `"refreshtoken"` → copy as `refresh_token`
-7. Run `./setup.sh install` and paste the values when prompted
+The easiest way is to use the browser console snippet below — it extracts all four
+values and copies them as a JSON blob directly to your clipboard in one shot.
+
+1. Log into https://outlook.office.com in Chrome or Edge while logged in as `mattwo01@roberthalf.com`
+2. Open DevTools: `Cmd+Option+I` → click the **Console** tab
+3. Paste this entire block and press Enter:
+
+```javascript
+(() => {
+  const keys = Object.keys(localStorage).filter(k => k.includes('msal'));
+  const rtKey = keys.find(k => {
+    try { return JSON.parse(localStorage[k])?.credentialType === 'RefreshToken'; }
+    catch(e) { return false; }
+  });
+  if (!rtKey) {
+    console.error('No MSAL RefreshToken found — make sure you are logged into outlook.office.com');
+    return;
+  }
+  const rt = JSON.parse(localStorage[rtKey]);
+  const tenant_id = rt.homeAccountId.split('.')[1];
+  const client_id = rt.clientId;
+  const refresh_token = rt.secret;
+  const accountKey = keys.find(k => {
+    try {
+      const v = JSON.parse(localStorage[k]);
+      return v?.homeAccountId === rt.homeAccountId && v?.username;
+    } catch(e) { return false; }
+  });
+  const email = accountKey ? JSON.parse(localStorage[accountKey]).username : '';
+  const blob = JSON.stringify({ tenant_id, client_id, refresh_token, email });
+  copy(blob);
+  console.log('✓ All credentials copied to clipboard as JSON!');
+  console.log('  tenant_id:    ', tenant_id);
+  console.log('  client_id:    ', client_id);
+  console.log('  email:        ', email || '(not found)');
+  console.log('  refresh_token:', refresh_token.substring(0, 20) + '... (' + refresh_token.length + ' chars)');
+})();
+```
+
+4. Leave the JSON blob in your clipboard — **don't copy anything else**
+5. Run `./setup.sh install` — it will detect the blob and store all four values in one confirmation
+
+> **Tip:** If you see `No MSAL RefreshToken found`, make sure you're on the
+> `https://outlook.office.com` tab (not Teams or SharePoint) and fully logged in.
+> Click your inbox first to trigger a token refresh, then re-run the snippet.
 
 ### Token renewal after expiry
 
 If you get `AADSTS700084` errors:
 1. Open outlook.office.com in your browser (this reissues a fresh token)
-2. Repeat the extraction steps above
-3. Run `./setup.sh creds` and re-enter just the `refresh_token`
+2. Re-run the browser console snippet above — it copies the new token to your clipboard
+3. Run `./setup.sh creds` — it will detect the clipboard blob and update in one step
 
 ---
 

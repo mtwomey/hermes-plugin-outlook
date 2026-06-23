@@ -88,11 +88,69 @@ def _keychain_delete(key: str) -> None:
     _KEYCHAIN_CACHE.pop(key, None)
 
 
+def _pbpaste() -> str:
+    """Read current clipboard contents via pbpaste. Returns empty string on failure."""
+    import subprocess
+    try:
+        r = subprocess.run(["pbpaste"], capture_output=True, text=True)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _read_clipboard_json() -> dict | None:
+    """Try to read a credentials JSON blob from the clipboard.
+
+    Returns a dict with any of {email, tenant_id, client_id, refresh_token}
+    that were present, or None if the clipboard doesn't look like our blob.
+    """
+    raw = _pbpaste()
+    if not raw:
+        return None
+    try:
+        import json as _json
+        blob = _json.loads(raw)
+    except ValueError:
+        return None
+    # Must contain at least one of our expected keys to count as our blob
+    if not any(k in blob for k in ("tenant_id", "client_id", "refresh_token", "email")):
+        return None
+    return blob
+
+
 def _prompt_cred(key: str, existing=None) -> str:
+    """Prompt user for a credential value.
+
+    Special handling:
+    - 'refresh_token' is ALWAYS read from clipboard — it's too long for the macOS
+      TTY line buffer and will be silently truncated if typed/pasted manually.
+    - Other secrets use getpass; non-secrets use regular input.
+    """
     info    = CRED_PROMPTS.get(key, {"label": key, "default": "", "is_secret": False})
     label   = info["label"]
     default = existing or info.get("default", "")
-    hint    = f" [{default[:6]}{'...' if len(default) > 6 else ''}]" if default else ""
+
+    if key == "refresh_token":
+        print(f"\n  {label}:")
+        print("    The token is too long to type or paste in the terminal (macOS TTY limit).")
+        print("    Copy it to your clipboard (or run the browser console snippet),")
+        print("    then press Enter.")
+        ans = input("    Press Enter when clipboard is ready (or type 'skip'): ").strip().lower()
+        if ans == "skip":
+            return default or ""
+        value = _pbpaste()
+        if not value:
+            print("  ⚠️  Clipboard is empty — skipping refresh_token")
+            return default or ""
+        if len(value) < 100:
+            print(f"  ⚠️  Clipboard content looks too short ({len(value)} chars).")
+            ans2 = input("    Store it anyway? [y/N]: ").strip().lower()
+            if ans2 != "y":
+                return default or ""
+        print(f"  ✓ Got token from clipboard ({len(value)} chars)")
+        return value
+
+    hint = f" [{default[:6]}{'...' if len(default) > 6 else ''}]" if default else ""
     if info.get("is_secret"):
         import getpass
         value = getpass.getpass(f"  {label}{hint}: ").strip()
@@ -101,7 +159,81 @@ def _prompt_cred(key: str, existing=None) -> str:
     return value or default
 
 
+def _store_creds_interactively(skip_if_all_stored: bool = False, yes: bool = False) -> None:
+    """Prompt for all credentials, using clipboard JSON blob as the primary path."""
+    existing_creds = cred_status()
+    all_stored     = all(existing_creds.values())
+
+    if all_stored and yes:
+        return
+
+    if all_stored and skip_if_all_stored and not yes:
+        ans = input("\n  Credentials already stored. Re-enter? [y/N]: ").strip().lower()
+        if ans != "y":
+            print("  ✓ Using existing credentials.")
+            return
+
+    print("\n  Credential setup")
+    print("  " + "─" * 46)
+    print("  See SKILL.md → 'Credential Setup' for the browser console snippet")
+    print("  that copies all four values as a JSON blob to your clipboard.\n")
+
+    # --- Primary path: clipboard JSON blob ---
+    blob = _read_clipboard_json()
+    if blob:
+        rt = blob.get("refresh_token", "")
+        print("  ✓ Found credentials JSON blob in clipboard:")
+        print(f"       tenant_id:     {blob.get('tenant_id', '(missing)')}")
+        print(f"       client_id:     {blob.get('client_id', '(missing)')}")
+        print(f"       email:         {blob.get('email', '(missing)')}")
+        if rt:
+            print(f"       refresh_token: {rt[:20]}... ({len(rt)} chars)")
+        else:
+            print("       refresh_token: (missing)")
+        print()
+        ans = input("  Store all credentials from clipboard? [Y/n]: ").strip().lower()
+        if ans in ("", "y"):
+            missing = []
+            for key in KEYS:
+                value = blob.get(key, "").strip()
+                if value:
+                    _keychain_store(key, value)
+                    display = f"{value[:20]}... ({len(value)} chars)" if len(value) > 40 else value
+                    print(f"  ✓ {key}: stored from clipboard ({display})")
+                else:
+                    missing.append(key)
+            if missing:
+                print(f"\n  ⚠️  Not in blob: {', '.join(missing)} — enter manually:\n")
+                for key in missing:
+                    existing = _keychain_read(key)
+                    value    = _prompt_cred(key, existing)
+                    if value:
+                        _keychain_store(key, value)
+                        print(f"  ✓ Stored: {key}")
+                    elif existing:
+                        print(f"  ✓ Kept existing: {key}")
+                    else:
+                        print(f"  ⚠️  Skipped (no value): {key}")
+            return
+
+    # --- Fallback: prompt each key individually ---
+    print("  ⚠️  No credentials JSON blob found in clipboard.")
+    print("       Run the browser console snippet (SKILL.md → Credential Setup),")
+    print("       then re-run. Or enter values manually:\n")
+    for key in KEYS:
+        existing = _keychain_read(key)
+        value    = _prompt_cred(key, existing)
+        if value:
+            _keychain_store(key, value)
+            print(f"  ✓ Stored: {key}")
+        elif existing:
+            print(f"  ✓ Kept existing: {key}")
+        else:
+            print(f"  ⚠️  Skipped (no value): {key}")
+
+
 def cred_status() -> dict:
+    """Return {key: stored?} for all KEYS."""
     return {k: (_keychain_read(k) is not None) for k in KEYS}
 
 
@@ -254,33 +386,8 @@ def cmd_install(yes: bool = False):
     # 2. Enable in config.yaml
     _enable_plugin()
 
-    # 3. Credentials
-    existing_creds = cred_status()
-    all_stored     = all(existing_creds.values())
-
-    if all_stored and yes:
-        print("  ✓ All credentials already stored. Skipping re-entry (--yes).")
-        _finish_install()
-        return
-
-    if all_stored and not yes:
-        ans = input("\n  Credentials already stored. Re-enter? [y/N]: ").strip().lower()
-        if ans != "y":
-            print("  ✓ Using existing credentials.")
-            _finish_install()
-            return
-
-    print("\n  Enter credentials (leave blank to keep existing value):\n")
-    for key in KEYS:
-        existing = _keychain_read(key)
-        value    = _prompt_cred(key, existing)
-        if value:
-            _keychain_store(key, value)
-            print(f"  ✓ Stored: {key}")
-        elif existing:
-            print(f"  ✓ Kept existing: {key}")
-        else:
-            print(f"  ⚠️  Skipped (no value): {key}")
+    # 3. Store credentials (clipboard-blob primary, per-key fallback)
+    _store_creds_interactively(skip_if_all_stored=True, yes=yes)
 
     _finish_install()
 
@@ -313,16 +420,7 @@ def cmd_remove(yes: bool = False):
 
 def cmd_creds(yes: bool = False):
     print(f"\nUpdating credentials for {PLUGIN_NAME}...\n")
-    for key in KEYS:
-        existing = _keychain_read(key)
-        value    = _prompt_cred(key, existing)
-        if value:
-            _keychain_store(key, value)
-            print(f"  ✓ Updated: {key}")
-        elif existing:
-            print(f"  ✓ Kept existing: {key}")
-        else:
-            print(f"  ⚠️  No value provided for: {key}")
+    _store_creds_interactively(skip_if_all_stored=False, yes=yes)
     print()
 
 
