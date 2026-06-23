@@ -10,8 +10,14 @@ import os
 import sys
 from pathlib import Path
 
-# Make scripts/ available for keychain_utils, date_utils, logging_utils
-sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+from . import schemas, tools
+
+# Make scripts/ available for keychain_utils, logging_utils
+_SCRIPTS_DIR = Path(__file__).parent / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+_SKILL_MD = Path(__file__).parent / "SKILL.md"
 
 
 PLUGIN_NAME = "outlook"
@@ -43,59 +49,43 @@ def register(ctx):
     """
     from logging_utils import setup_logging
     log = setup_logging(PLUGIN_NAME, _get_log_level())
-    log.debug("outlook plugin: setup() called")
-
-    # ── Import schemas and tools ──────────────────────────────────────────────
-    from schemas import (
-        PING,
-        LIST_EMAILS, READ_EMAIL, SEARCH_EMAILS, LIST_FOLDERS,
-        MARK_READ, MOVE_EMAIL, SEND_EMAIL, REPLY_EMAIL, FORWARD_EMAIL,
-        LIST_EVENTS, GET_EVENT, SEARCH_EVENTS, CREATE_EVENT, UPDATE_EVENT,
-        DELETE_EVENT, RESPOND_EVENT, GET_ATTENDEE_STATUS, FIND_MEETING_TIMES,
-        LIST_CALENDARS, GET_SCHEDULE, ADD_ATTENDEES, REMOVE_ATTENDEES,
-    )
-    from tools import (
-        outlook_ping,
-        outlook_list_emails, outlook_read_email, outlook_search_emails, outlook_list_folders,
-        outlook_mark_read, outlook_move_email, outlook_send_email, outlook_reply_email,
-        outlook_forward_email,
-        outlook_list_events, outlook_get_event, outlook_search_events, outlook_create_event,
-        outlook_update_event, outlook_delete_event, outlook_respond_event,
-        outlook_get_attendee_status, outlook_find_meeting_times,
-        outlook_list_calendars, outlook_get_schedule, outlook_add_attendees, outlook_remove_attendees,
-    )
+    log.debug("outlook plugin: register() called")
 
     # ── Register tools ────────────────────────────────────────────────────────
     pairs = [
-        (PING,               outlook_ping),
+        (schemas.PING,               tools.outlook_ping),
         # Email
-        (LIST_EMAILS,        outlook_list_emails),
-        (READ_EMAIL,         outlook_read_email),
-        (SEARCH_EMAILS,      outlook_search_emails),
-        (LIST_FOLDERS,       outlook_list_folders),
-        (MARK_READ,          outlook_mark_read),
-        (MOVE_EMAIL,         outlook_move_email),
-        (SEND_EMAIL,         outlook_send_email),
-        (REPLY_EMAIL,        outlook_reply_email),
-        (FORWARD_EMAIL,      outlook_forward_email),
+        (schemas.LIST_EMAILS,        tools.outlook_list_emails),
+        (schemas.READ_EMAIL,         tools.outlook_read_email),
+        (schemas.SEARCH_EMAILS,      tools.outlook_search_emails),
+        (schemas.LIST_FOLDERS,       tools.outlook_list_folders),
+        (schemas.MARK_READ,          tools.outlook_mark_read),
+        (schemas.MOVE_EMAIL,         tools.outlook_move_email),
+        (schemas.SEND_EMAIL,         tools.outlook_send_email),
+        (schemas.REPLY_EMAIL,        tools.outlook_reply_email),
+        (schemas.FORWARD_EMAIL,      tools.outlook_forward_email),
         # Calendar
-        (LIST_EVENTS,        outlook_list_events),
-        (GET_EVENT,          outlook_get_event),
-        (SEARCH_EVENTS,      outlook_search_events),
-        (CREATE_EVENT,       outlook_create_event),
-        (UPDATE_EVENT,       outlook_update_event),
-        (DELETE_EVENT,       outlook_delete_event),
-        (RESPOND_EVENT,      outlook_respond_event),
-        (GET_ATTENDEE_STATUS,  outlook_get_attendee_status),
-        (FIND_MEETING_TIMES,   outlook_find_meeting_times),
-        (LIST_CALENDARS,     outlook_list_calendars),
-        (GET_SCHEDULE,       outlook_get_schedule),
-        (ADD_ATTENDEES,      outlook_add_attendees),
-        (REMOVE_ATTENDEES,   outlook_remove_attendees),
+        (schemas.LIST_EVENTS,        tools.outlook_list_events),
+        (schemas.GET_EVENT,          tools.outlook_get_event),
+        (schemas.SEARCH_EVENTS,      tools.outlook_search_events),
+        (schemas.CREATE_EVENT,       tools.outlook_create_event),
+        (schemas.UPDATE_EVENT,       tools.outlook_update_event),
+        (schemas.DELETE_EVENT,       tools.outlook_delete_event),
+        (schemas.RESPOND_EVENT,      tools.outlook_respond_event),
+        (schemas.GET_ATTENDEE_STATUS,  tools.outlook_get_attendee_status),
+        (schemas.FIND_MEETING_TIMES,   tools.outlook_find_meeting_times),
+        (schemas.LIST_CALENDARS,     tools.outlook_list_calendars),
+        (schemas.GET_SCHEDULE,       tools.outlook_get_schedule),
+        (schemas.ADD_ATTENDEES,      tools.outlook_add_attendees),
+        (schemas.REMOVE_ATTENDEES,   tools.outlook_remove_attendees),
     ]
 
     for schema, handler in pairs:
-        ctx.register_tool(schema=schema, handler=handler)
+        ctx.register_tool(name=schema["name"], toolset=PLUGIN_NAME, schema=schema, handler=handler)
         log.debug("outlook: registered tool %s", schema["name"])
+
+    # ── Register bundled skill ────────────────────────────────────────────────
+    if _SKILL_MD.exists():
+        ctx.register_skill(PLUGIN_NAME, _SKILL_MD)
 
     log.info("outlook plugin: %d tools registered", len(pairs))
