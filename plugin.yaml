@@ -1,0 +1,42 @@
+name: outlook
+version: 1.0.0
+description: >
+  Robert Half email (mattwo01@roberthalf.com) and calendar via Microsoft Outlook / M365 REST API.
+  Authenticates via a browser-extracted SPA refresh token stored in macOS Keychain.
+provides_tools:
+  - outlook_ping
+  - outlook_list_emails
+  - outlook_read_email
+  - outlook_search_emails
+  - outlook_list_folders
+  - outlook_mark_read
+  - outlook_move_email
+  - outlook_send_email
+  - outlook_reply_email
+  - outlook_forward_email
+  - outlook_list_events
+  - outlook_get_event
+  - outlook_search_events
+  - outlook_create_event
+  - outlook_update_event
+  - outlook_delete_event
+  - outlook_respond_event
+  - outlook_get_attendee_status
+  - outlook_find_meeting_times
+  - outlook_list_calendars
+  - outlook_get_schedule
+  - outlook_add_attendees
+  - outlook_remove_attendees
+requires_env:
+  - name: OUTLOOK_EMAIL
+    description: "Robert Half email address (mattwo01@roberthalf.com)"
+    secret: false
+  - name: OUTLOOK_TENANT_ID
+    description: "Azure AD tenant ID (extract from browser — see README)"
+    secret: true
+  - name: OUTLOOK_CLIENT_ID
+    description: "OAuth2 client ID (extract from browser — see README)"
+    secret: true
+  - name: OUTLOOK_REFRESH_TOKEN
+    description: "M365 SPA refresh token (extract from browser — see README)"
+    secret: true
