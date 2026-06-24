@@ -26,6 +26,8 @@ config = PluginConfig(
         "refresh_token": ("Outlook refresh token (extract from browser MSAL cache — see README)", "", True),
     },
     requirements=[],
+    has_skill_stub=True,
+    skill_stub_category="email",
 )
 
 if __name__ == "__main__":
