@@ -188,6 +188,17 @@ tail -f ~/.hermes/logs/outlook.log
 
 ---
 
+## Pitfalls
+
+- **Token expires after 24 hours of inactivity (`AADSTS700084`)** — the SPA refresh token has a hard 24-hour lifetime. If no Outlook tool is called within that window the chain expires and must be re-extracted from the browser. See the Token renewal section above.
+- **`outlook_get_schedule` only reads the authenticated user's own calendar** — due to Outlook REST v2 limitations it cannot fetch other attendees' free/busy. Use `outlook_find_meeting_times` when you need availability across multiple people.
+- **`outlook_update_event` body replaces the entire description** — omit the `body` parameter if you only want to change the time or subject; passing it will overwrite existing notes.
+- **Folder names are case-sensitive and must be exact** — use `outlook_list_folders` to find the correct name before moving or listing; guessing "Inbox" vs "inbox" can return empty results.
+- **Range phrases in `outlook_list_events`** — when `start` is a range phrase like `"this week"`, do NOT pass `end`; the tool sets both automatically and a manual `end` will conflict.
+- **Credentials not loaded at startup** — credential loading is lazy (first tool call). If `outlook_ping` returns a credentials error, run `./setup.sh creds` and restart Hermes.
+
+---
+
 ## Setup Commands
 
 ```bash
