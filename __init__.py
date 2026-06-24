@@ -1,57 +1,18 @@
 """
-hermes-plugin-outlook — Microsoft Outlook (M365) email and calendar plugin for Hermes Agent.
-
-Entry point called by Hermes when the plugin is loaded.
-Registers all tool schemas and their handler functions with the plugin context.
+hermes-plugin-outlook — Microsoft Outlook (M365) email and calendar plugin.
+Hermes calls register(ctx) once at startup.
 """
-
-import logging
-import os
-import sys
 from pathlib import Path
-
+from hermes_plugin_core import setup_logging
+from hermes_plugin_core.config import get_log_level
 from . import schemas, tools
-
-# Make scripts/ available for keychain_utils, logging_utils
-_SCRIPTS_DIR = Path(__file__).parent / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 _SKILL_MD = Path(__file__).parent / "SKILL.md"
 
 
-PLUGIN_NAME = "outlook"
-
-
-def _get_log_level() -> str:
-    """Read log level from plugins.config.outlook.log_level in config.yaml."""
-    try:
-        hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-        config_file = hermes_home / "config.yaml"
-        if not config_file.exists():
-            return "WARNING"
-        from ruamel.yaml import YAML
-        yaml = YAML()
-        with open(config_file) as f:
-            data = yaml.load(f)
-        plugins = data.get("plugins") or {}
-        config  = plugins.get("config") or {}
-        plugin  = config.get(PLUGIN_NAME) or {}
-        return plugin.get("log_level", "WARNING")
-    except Exception:
-        return "WARNING"
-
-
 def register(ctx):
-    """
-    Called by Hermes when the plugin is loaded.
-    Registers all tool schemas + handlers with the plugin context.
-    """
-    from logging_utils import setup_logging
-    log = setup_logging(PLUGIN_NAME, _get_log_level())
-    log.debug("outlook plugin: register() called")
+    setup_logging("outlook", get_log_level("outlook"))
 
-    # ── Register tools ────────────────────────────────────────────────────────
     pairs = [
         (schemas.PING,               tools.outlook_ping),
         # Email
@@ -81,11 +42,7 @@ def register(ctx):
     ]
 
     for schema, handler in pairs:
-        ctx.register_tool(name=schema["name"], toolset=PLUGIN_NAME, schema=schema, handler=handler)
-        log.debug("outlook: registered tool %s", schema["name"])
+        ctx.register_tool(name=schema["name"], toolset="outlook", schema=schema, handler=handler)
 
-    # ── Register bundled skill ────────────────────────────────────────────────
     if _SKILL_MD.exists():
-        ctx.register_skill(PLUGIN_NAME, _SKILL_MD)
-
-    log.info("outlook plugin: %d tools registered", len(pairs))
+        ctx.register_skill("outlook", _SKILL_MD)

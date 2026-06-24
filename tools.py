@@ -32,7 +32,12 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+# Keep scripts/ on sys.path for date_utils
+_SCRIPTS_DIR = str(Path(__file__).parent / "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from hermes_plugin_core.keychain import cred_get, cred_set
 
 log = logging.getLogger("outlook")
 
@@ -48,21 +53,14 @@ def _get_creds() -> dict:
     """Load credentials from Keychain on first call; return cached after that."""
     if not _state:
         try:
-            from keychain_utils import fetch_credential, CredentialError  # noqa: F401
             SERVICE = "hermes-outlook"
             keys = ["email", "refresh_token", "tenant_id", "client_id"]
-            env_map = {
-                "email":         "OUTLOOK_EMAIL",
-                "refresh_token": "OUTLOOK_REFRESH_TOKEN",
-                "tenant_id":     "OUTLOOK_TENANT_ID",
-                "client_id":     "OUTLOOK_CLIENT_ID",
-            }
-            creds = {k: fetch_credential(SERVICE, k, env_fallback=env_map[k]) for k in keys}
+            creds = {k: cred_get(SERVICE, k) for k in keys}
             _state.update(creds)
         except Exception as e:
             raise RuntimeError(
                 f"Outlook credentials not found. "
-                f"Run `./setup.sh install` in the plugin directory to store credentials. ({e})"
+                f"Run `python setup.py install` in the plugin directory to store credentials. ({e})"
             )
     return _state
 
@@ -129,8 +127,7 @@ def _get_access_token() -> str:
 
         if new_refresh and new_refresh != creds["refresh_token"]:
             try:
-                from keychain_utils import store_credential
-                store_credential("hermes-outlook", "refresh_token", new_refresh)
+                cred_set("hermes-outlook", "refresh_token", new_refresh)
                 _state["refresh_token"] = new_refresh
                 log.info("refresh token rotated and saved to Keychain")
             except Exception as e:
