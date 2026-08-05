@@ -17,6 +17,7 @@ from pathlib import Path
 
 from hermes_plugin_core.setup_cli import SetupCLI, PluginConfig
 from hermes_plugin_core.keychain import cred_get, cred_set
+from pkce_config import TENANT_ID, CLIENT_ID
 
 config = PluginConfig(
     plugin_key="outlook",
@@ -25,9 +26,9 @@ config = PluginConfig(
     keys=["email", "tenant_id", "client_id", "refresh_token"],
     cred_prompts={
         "email":         ("Your Outlook email address (e.g. mattwo01@roberthalf.com)", "mattwo01@roberthalf.com", False),
-        "tenant_id":     ("Azure AD Tenant ID (extract from browser — see README)", "", False),
-        "client_id":     ("OAuth2 Client ID (extract from browser — see README)", "", False),
-        "refresh_token": ("Outlook refresh token (extract from browser MSAL cache — see README)", "", True),
+        "tenant_id":     ("Azure AD Tenant ID (hardcoded default — press Enter to accept)", TENANT_ID, False),
+        "client_id":     ("OAuth2 Client ID (hardcoded default — press Enter to accept)", CLIENT_ID, False),
+        "refresh_token": ("Outlook refresh token — obtain via outlook_renew_token_start/finish in a Hermes session, or scripts/pkce_login_step1.py + step2.py, then paste here", "", True),
     },
     requirements=[],
     has_skill_stub=True,
@@ -97,8 +98,9 @@ class OutlookSetupCLI(SetupCLI):
 
         print(f"\n{cfg.plugin_key} credential setup")
         print("=" * 50)
-        print("  See README.md for the browser console snippet that copies")
-        print("  all four values as a JSON blob to your clipboard in one shot.\n")
+        print("  Preferred: run outlook_renew_token_start / outlook_renew_token_finish")
+        print("  inside a Hermes session — see README.md for details.")
+        print("  This clipboard-blob flow is a fallback for use outside Hermes.\n")
 
         # --- Primary path: clipboard JSON blob ---
         blob = _read_clipboard_json()

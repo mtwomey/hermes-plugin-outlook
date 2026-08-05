@@ -6,16 +6,16 @@ Provides 23 tools covering email (list, read, search, send, reply, forward, move
 calendar (list, create, update, delete, respond, find meeting times, free/busy).
 
 Uses **SPA refresh-token auth** — no Azure AD app registration required, no admin
-consent needed. The token is extracted once from your browser and rotates automatically
-at runtime.
+consent needed. The token renews via a Hermes-agent-driven browser PKCE flow (or a
+manual fallback script) and rotates automatically at runtime between renewals.
 
 ---
 
 ## Requirements
 
 - macOS (uses Keychain for credential storage)
-- Chrome or Edge browser, logged into `https://outlook.office.com` as `mattwo01@roberthalf.com`
 - Hermes Agent installed
+- For token renewal: Hermes's browser tool signed into `mattwo01@roberthalf.com` (the agent drives this interactively as needed — see Credential Setup / Token Renewal below)
 
 ---
 
@@ -24,92 +24,50 @@ at runtime.
 ```bash
 cd ~/Git_Repos/hermes-plugin-outlook
 
-# Step 1 — Extract credentials from your browser (see below)
-# Step 2 — Run setup (reads credentials from clipboard automatically)
+# Step 1 — Run setup (symlinks the plugin + prompts for credentials)
 ./setup.sh install
+# Step 2 — If prompted for a refresh_token you don't have yet, see
+#          "Credential Setup / Token Renewal" below
 
 # Step 3 — Restart Hermes
 ```
 
 ---
 
-## Credential Extraction (one-time setup)
+## Credential Setup / Token Renewal
 
-Outlook Web stores your login tokens in `localStorage`. The snippet below reads them
-and calls `copy()` to put all four values on your clipboard as a JSON blob in one shot —
-no manual digging through DevTools storage.
+**Preferred method — inside a Hermes chat session:**
 
-### Step 1 — Open the browser console
+1. Ask Hermes to renew the Outlook token (or just try an Outlook tool — if
+   the token has expired you'll get a message pointing you here).
+2. Hermes calls `outlook_renew_token_start`, which returns a Microsoft
+   sign-in URL.
+3. Hermes navigates to it with its own browser tool and drives sign-in
+   (account picker, password/MFA if needed) — you may need to approve an
+   MFA prompt on your device, but there is no copy/paste required from you.
+4. Once signed in, Hermes captures the resulting URL (which contains the
+   authorization code) and calls `outlook_renew_token_finish` with it,
+   which exchanges the code for a fresh refresh token and saves it to
+   Keychain — no restart needed, Outlook tools work again immediately.
 
-1. Go to **`https://outlook.office.com`** in Chrome or Edge, logged in as your RHI account
-2. Open DevTools: **`Cmd+Option+I`** (macOS) → click the **Console** tab
+The authorization code is single-use and expires within a couple of
+minutes, so this needs to happen promptly once sign-in completes — Hermes
+handles the timing automatically.
 
-### Step 2 — Run the extraction snippet
-
-Paste this entire block into the Console and press **Enter**:
-
-```javascript
-(() => {
-  const keys = Object.keys(localStorage).filter(k => k.includes('msal'));
-  const rtKey = keys.find(k => {
-    try { return JSON.parse(localStorage[k])?.credentialType === 'RefreshToken'; }
-    catch(e) { return false; }
-  });
-  if (!rtKey) {
-    console.error('No MSAL RefreshToken found — make sure you are logged into outlook.office.com');
-    return;
-  }
-  const rt = JSON.parse(localStorage[rtKey]);
-  const tenant_id = rt.homeAccountId.split('.')[1];
-  const client_id = rt.clientId;
-  const refresh_token = rt.secret;
-  const accountKey = keys.find(k => {
-    try {
-      const v = JSON.parse(localStorage[k]);
-      return v?.homeAccountId === rt.homeAccountId && v?.username;
-    } catch(e) { return false; }
-  });
-  const email = accountKey ? JSON.parse(localStorage[accountKey]).username : '';
-  const blob = JSON.stringify({ tenant_id, client_id, refresh_token, email });
-  copy(blob);
-  console.log('✓ All credentials copied to clipboard as JSON!');
-  console.log('  tenant_id:    ', tenant_id);
-  console.log('  client_id:    ', client_id);
-  console.log('  email:        ', email || '(not found — you will be prompted)');
-  console.log('  refresh_token:', refresh_token.substring(0, 20) + '... (' + refresh_token.length + ' chars)');
-})();
-```
-
-You should see `✓ All credentials copied to clipboard as JSON!` in the console.
-
-> **Tip:** If you see `No MSAL RefreshToken found`, make sure you're on the
-> `https://outlook.office.com` tab (not Teams or SharePoint) and that you are
-> fully logged in. Click your inbox first to trigger a token refresh, then re-run.
-
-### Step 3 — Run setup
-
-**Leave the JSON blob in your clipboard** (don't copy anything else), then:
+**Fallback method — outside a Hermes session (e.g. plugin broken):**
 
 ```bash
-./setup.sh install
+cd ~/Git_Repos/hermes-plugin-outlook
+python3 scripts/pkce_login_step1.py     # opens browser
+# sign in, copy the resulting URL immediately
+python3 scripts/pkce_login_step2.py "<pasted URL>"
+# copy the printed JSON to your clipboard, then:
+./setup.sh credentials configure
 ```
 
-The setup script reads the clipboard automatically, shows you a preview of all four
-values, and stores them in Keychain with a single `[Y/n]` confirmation.
-
----
-
-## Token Renewal
-
-> **⚠️ SPA tokens have a fixed 24-hour hard lifetime (`AADSTS700084`).**
-> If no Outlook tool is called for >24 hours, the token chain expires and you need
-> to re-extract from your browser.
-
-When you see `AADSTS700084` errors:
-
-1. Go to `https://outlook.office.com` in your browser (this reissues a fresh token)
-2. Re-run the console snippet above — it copies the new blob to your clipboard
-3. Run `./setup.sh creds` — detects the blob and updates all credentials in one step
+See `docs/token-renewal-pkce.md` for the full technical background on why
+this flow works, how the exact client_id/scope/redirect_uri were
+discovered, and what other approaches were tried and failed.
 
 ---
 
@@ -131,13 +89,17 @@ When you see `AADSTS700084` errors:
 
 This plugin uses M365 SPA (Single-Page Application) refresh token authentication:
 
-1. A refresh token is extracted once from the browser's MSAL localStorage cache.
+1. A refresh token is obtained via the PKCE renewal flow (agent-driven or manual
+   fallback — see Credential Setup / Token Renewal above).
 2. At runtime the plugin POSTs to `login.microsoftonline.com` with spoofed browser
    headers to exchange it for a short-lived access token (1 hour).
 3. The response includes a new refresh token, which is written back to Keychain
    automatically — the token chain is self-sustaining as long as it's used regularly.
-
-No Azure AD app registration, no admin consent, no OAuth redirect flow required.
+4. When the refresh token itself expires (~24h of inactivity), renewal uses a
+   browser-driven OAuth 2.0 Authorization Code + PKCE flow — see the Credential
+   Setup / Token Renewal section above. No Azure AD app registration or admin
+   consent is required; the flow reuses Outlook Web's own already-consented
+   client_id.
 
 ---
 
@@ -145,7 +107,7 @@ No Azure AD app registration, no admin consent, no OAuth redirect flow required.
 
 | Symptom | Fix |
 |---|---|
-| `AADSTS700084` | Token expired (>24h). Re-extract and run `./setup.sh creds` |
+| `AADSTS700084` | Token expired (>24h). Ask Hermes to renew it (outlook_renew_token_start/finish), or use the manual fallback scripts — see Credential Setup / Token Renewal section |
 | `HTTP 401` | Wrong tenant_id or client_id. Re-run `./setup.sh creds` |
 | `Credential not found` | Run `./setup.sh install` |
 | Tools not appearing in Hermes | Run `./setup.sh status`, restart Hermes |

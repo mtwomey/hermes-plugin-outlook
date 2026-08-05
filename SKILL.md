@@ -34,6 +34,12 @@ authentication — no Azure AD app registration required.
 |---|---|
 | `outlook_ping` | Check connectivity and authentication |
 
+### Auth / Token Renewal
+| Tool | Description |
+|---|---|
+| `outlook_renew_token_start` | Begin renewing the refresh token — returns an auth_url for the agent to navigate to |
+| `outlook_renew_token_finish` | Complete renewal by exchanging the captured redirect URL for a fresh token |
+
 ### Email
 | Tool | Description |
 |---|---|
@@ -162,10 +168,23 @@ and copies them to your clipboard in one shot.
 
 ### Token renewal after expiry
 
-If you get `AADSTS700084` errors:
-1. Open outlook.office.com in your browser (reissues a fresh token)
-2. Re-run the browser console snippet from `README.md`
-3. Run `./setup.sh creds` — detects the clipboard blob and updates in one step
+If any outlook_* tool call fails with a token-expiry error (AADSTS700084 or
+AADSTS70008), renew it:
+
+1. Call `outlook_renew_token_start` — returns an auth_url.
+2. Navigate to it with your own browser tool (browser_navigate). Drive any
+   account-picker/login/MFA steps that appear — do not assume one call
+   finishes it (see docs/token-renewal-pkce.md for known behavior).
+3. Once signed in, get the true current URL via
+   `browser_console(expression='window.location.href')` — do not trust
+   browser_navigate's own returned snapshot, which may show rendered page
+   content instead of the redirect URL.
+4. Call `outlook_renew_token_finish(redirect_url=<that URL>)` immediately
+   — the code expires within about 2 minutes.
+5. Retry the original failed call — no Hermes restart needed.
+
+Fallback (outside a Hermes session): `scripts/pkce_login_step1.py` +
+`scripts/pkce_login_step2.py`, then `./setup.sh credentials configure`.
 
 ---
 
@@ -190,7 +209,7 @@ tail -f ~/.hermes/logs/outlook.log
 
 ## Pitfalls
 
-- **Token expires after 24 hours of inactivity (`AADSTS700084`)** — the SPA refresh token has a hard 24-hour lifetime. If no Outlook tool is called within that window the chain expires and must be re-extracted from the browser. See the Token renewal section above.
+- **Token expires after 24 hours of inactivity (`AADSTS700084`)** — the SPA refresh token has a hard 24-hour lifetime. If no Outlook tool is called within that window the chain expires and must be renewed via the PKCE flow described in the Token renewal section above.
 - **`outlook_get_schedule` only reads the authenticated user's own calendar** — due to Outlook REST v2 limitations it cannot fetch other attendees' free/busy. Use `outlook_find_meeting_times` when you need availability across multiple people.
 - **`outlook_update_event` body replaces the entire description** — omit the `body` parameter if you only want to change the time or subject; passing it will overwrite existing notes.
 - **Folder names are case-sensitive and must be exact** — use `outlook_list_folders` to find the correct name before moving or listing; guessing "Inbox" vs "inbox" can return empty results.
