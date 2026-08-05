@@ -39,6 +39,8 @@ if _SCRIPTS_DIR not in sys.path:
 
 from hermes_plugin_core.keychain import cred_get, cred_set
 
+from . import pkce_config
+
 log = logging.getLogger("outlook")
 
 # ── Lazy credential + token singleton ────────────────────────────────────────
@@ -47,6 +49,7 @@ _state: dict = {}          # populated on first _get_creds() call
 _token_lock  = threading.Lock()
 _token_cache: dict = {"access_token": None, "expires_at": 0.0}
 _REFRESH_BUFFER_SECS = 120   # refresh 2 min before expiry
+_pkce_state: dict = {}   # holds verifier/state between start() and finish() calls
 
 
 def _get_creds() -> dict:
@@ -110,6 +113,15 @@ def _get_access_token() -> str:
                 code = str(e.code)
                 desc = body[:300]
             log.error("Token refresh failed — HTTP %s | error=%s | %s", e.code, code, desc)
+            if "AADSTS700084" in desc or "AADSTS70008" in desc:
+                raise RuntimeError(
+                    "Your Outlook token has expired. To renew: call "
+                    "outlook_renew_token_start, navigate to the returned "
+                    "auth_url with your browser tool, capture the final "
+                    "redirect URL once sign-in resolves, then call "
+                    "outlook_renew_token_finish with it. "
+                    f"(Original error: {code} — {desc})"
+                ) from e
             raise RuntimeError(f"Token refresh failed (HTTP {e.code}): {code} — {desc}") from e
 
         if "error" in data:
@@ -134,6 +146,143 @@ def _get_access_token() -> str:
                 log.warning("failed to rotate refresh token: %s", e)
 
         return access_token
+
+
+def outlook_renew_token_start(args: dict, **kwargs) -> str:
+    """Begin renewing the Outlook refresh token via PKCE.
+
+    Returns an auth_url. The CALLING AGENT (not the user) should navigate
+    to this URL using its own browser tool (e.g. browser_navigate), capture
+    the final redirect URL once sign-in resolves, and pass that URL to
+    outlook_renew_token_finish.
+
+    If the browser session isn't already authenticated, the agent may need
+    to drive an interactive sign-in (see docs/token-renewal-pkce.md for
+    known behavior) before the code becomes available.
+    """
+    import base64, hashlib, secrets, urllib.parse
+
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(16)
+
+    _pkce_state.clear()
+    _pkce_state.update({"verifier": verifier, "state": state})
+
+    auth_params = urllib.parse.urlencode({
+        "client_id": pkce_config.CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": pkce_config.REDIRECT_URI,
+        "response_mode": "fragment",
+        "scope": pkce_config.SCOPE,
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    })
+    auth_url = f"https://login.microsoftonline.com/{pkce_config.TENANT_ID}/oauth2/v2.0/authorize?{auth_params}"
+
+    return json.dumps({
+        "status": "awaiting_signin",
+        "auth_url": auth_url,
+        "instructions": (
+            "Drive this multi-step, adaptive procedure with your own browser "
+            "tool (do not expect one call to finish it): "
+            "1) browser_navigate to auth_url. "
+            "2) Inspect what came back — it may be an account-picker or "
+            "login form, not the final redirect. If so, drive it with "
+            "browser_click/browser_type as needed (e.g. click the account, "
+            "enter a password if prompted). "
+            "3) If a password/MFA prompt appears that can't be scripted "
+            "through (e.g. a phone push approval), tell the user to approve "
+            "it on their device, then re-check by navigating or taking a "
+            "snapshot again. "
+            "4) Once sign-in completes, do NOT trust browser_navigate's own "
+            "returned snapshot to contain the code — call "
+            "browser_console(expression='window.location.href') to get the "
+            "true current URL from the browser's JS context; it should "
+            f"match '{pkce_config.REDIRECT_URI}#code=...&state=...'. "
+            "5) Call outlook_renew_token_finish with that URL immediately — "
+            "the code expires within about 2 minutes."
+        ),
+    })
+
+
+def outlook_renew_token_finish(args: dict, **kwargs) -> str:
+    """Complete token renewal: exchange the redirect URL (captured by the
+    agent via browser navigation, containing '#code=...&state=...') for
+    tokens and store the new refresh_token in Keychain."""
+    import urllib.error, urllib.parse, urllib.request
+
+    redirect_url = args.get("redirect_url", "")
+    if not redirect_url:
+        return json.dumps({"error": "Missing 'redirect_url' — pass the final URL your browser tool navigated to after sign-in completed."})
+
+    if not _pkce_state.get("verifier"):
+        return json.dumps({"error": "No renewal in progress — call outlook_renew_token_start first."})
+
+    parsed = urllib.parse.urlparse(redirect_url)
+    params = urllib.parse.parse_qs(parsed.query)
+    if "code" not in params and parsed.fragment:
+        params = urllib.parse.parse_qs(parsed.fragment)
+
+    if "error" in params:
+        return json.dumps({"error": params.get("error_description", params["error"])[0]})
+    if "code" not in params:
+        return json.dumps({"error": "No 'code' parameter found in the given URL. Make sure sign-in fully completed and you passed the FINAL resolved URL."})
+
+    code = params["code"][0]
+    returned_state = params.get("state", [None])[0]
+    if returned_state != _pkce_state["state"]:
+        return json.dumps({"error": "State mismatch — this URL doesn't match the current renewal attempt. Call outlook_renew_token_start again and use the fresh auth_url."})
+
+    token_data = urllib.parse.urlencode({
+        "client_id": pkce_config.CLIENT_ID,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": pkce_config.REDIRECT_URI,
+        "code_verifier": _pkce_state["verifier"],
+        "scope": pkce_config.SCOPE,
+    }).encode()
+
+    req = urllib.request.Request(
+        f"https://login.microsoftonline.com/{pkce_config.TENANT_ID}/oauth2/v2.0/token",
+        data=token_data, method="POST",
+        headers=pkce_config.TOKEN_EXCHANGE_HEADERS,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            tok = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        log.warning("outlook_renew_token_finish: token exchange failed: %s", body)
+        return json.dumps({"error": f"Token exchange failed: {body[:500]}"})
+
+    refresh_token = tok.get("refresh_token", "")
+    access_token = tok.get("access_token", "")
+    expires_in = int(tok.get("expires_in", 3600))
+    if not refresh_token or not access_token:
+        return json.dumps({"error": f"Token response missing expected fields: {json.dumps(tok)[:300]}"})
+
+    try:
+        cred_set("hermes-outlook", "refresh_token", refresh_token)
+        cred_set("hermes-outlook", "tenant_id", pkce_config.TENANT_ID)
+        cred_set("hermes-outlook", "client_id", pkce_config.CLIENT_ID)
+    except Exception as e:
+        return json.dumps({"error": f"Got a fresh token but failed to save it to Keychain: {e}"})
+
+    _state["refresh_token"] = refresh_token
+    _state["tenant_id"] = pkce_config.TENANT_ID
+    _state["client_id"] = pkce_config.CLIENT_ID
+    _token_cache["access_token"] = access_token
+    _token_cache["expires_at"] = time.time() + expires_in
+    _pkce_state.clear()
+
+    return json.dumps({
+        "status": "ok",
+        "message": "Token renewed and saved to Keychain. Outlook tools should work again immediately — no restart needed.",
+    })
 
 
 def _api(method: str, path: str, body: dict | None = None) -> dict:
