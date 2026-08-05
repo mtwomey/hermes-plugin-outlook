@@ -393,6 +393,35 @@ SET_ATTENDEE_TYPE = {
     },
 }
 
+RENEW_TOKEN_START = {
+    "name": "outlook_renew_token_start",
+    "description": (
+        "Begin renewing the Outlook refresh token when it has expired (AADSTS700084). "
+        "Returns an auth_url — the AGENT should navigate to it with its own browser tool "
+        "(e.g. browser_navigate), capture the final redirect URL once sign-in resolves, and "
+        "pass that URL to outlook_renew_token_finish. "
+        "Returns: {\"status\": \"awaiting_signin\", \"auth_url\": \"...\", \"instructions\": \"...\"}."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
+RENEW_TOKEN_FINISH = {
+    "name": "outlook_renew_token_finish",
+    "description": (
+        "Complete Outlook token renewal using the final redirect URL captured after browser "
+        "sign-in (from outlook_renew_token_start's auth_url). Exchanges the authorization code "
+        "for a fresh refresh token and saves it to Keychain. "
+        "Returns: {\"status\": \"ok\", \"message\": \"...\"} or {\"error\": \"...\"}."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "redirect_url": {"type": "string", "description": "The final resolved URL after browser sign-in completed, containing '#code=...&state=...' (or '?code=...' )."},
+        },
+        "required": ["redirect_url"],
+    },
+}
+
 REMOVE_ATTENDEES = {
     "name": "outlook_remove_attendees",
     "description": (

@@ -40,6 +40,8 @@ def register(ctx):
         (schemas.ADD_ATTENDEES,      tools.outlook_add_attendees),
         (schemas.SET_ATTENDEE_TYPE,  tools.outlook_set_attendee_type),
         (schemas.REMOVE_ATTENDEES,   tools.outlook_remove_attendees),
+        (schemas.RENEW_TOKEN_START,  tools.outlook_renew_token_start),
+        (schemas.RENEW_TOKEN_FINISH, tools.outlook_renew_token_finish),
     ]
 
     for schema, handler in pairs:
