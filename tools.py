@@ -531,17 +531,20 @@ def outlook_search_events(args: dict, **kwargs) -> str:
 
 def outlook_create_event(args: dict, **kwargs) -> str:
     """Create a new calendar event."""
-    subject    = args.get("subject", "")
-    start      = args.get("start", "")
-    end        = args.get("end", "")
-    attendees  = args.get("attendees", "")
-    location   = args.get("location", "")
-    body       = args.get("body", "")
-    is_online  = bool(args.get("is_online", False))
-    is_all_day = bool(args.get("is_all_day", False))
-    timezone   = args.get("timezone", _CST)
+    subject       = args.get("subject", "")
+    start         = args.get("start", "")
+    end           = args.get("end", "")
+    attendees     = args.get("attendees", "")
+    attendee_type = args.get("attendee_type", "Required")
+    location      = args.get("location", "")
+    body          = args.get("body", "")
+    is_online     = bool(args.get("is_online", False))
+    is_all_day    = bool(args.get("is_all_day", False))
+    timezone      = args.get("timezone", _CST)
     log.info("outlook_create_event: subject=%r start=%r", subject, start)
     try:
+        if attendee_type not in ("Required", "Optional", "Resource"):
+            attendee_type = "Required"
         payload: dict = {
             "Subject":          subject,
             "Start":            {"DateTime": _dt(start, timezone), "TimeZone": timezone},
@@ -556,7 +559,7 @@ def outlook_create_event(args: dict, **kwargs) -> str:
         if attendees:
             emails = [a.strip() for a in attendees.split(",") if a.strip()]
             payload["Attendees"] = [
-                {"EmailAddress": {"Address": em}, "Type": "Required"}
+                {"EmailAddress": {"Address": em}, "Type": attendee_type}
                 for em in emails
             ]
         result = _api("POST", "/me/calendar/events", payload)
@@ -809,10 +812,13 @@ def outlook_get_schedule(args: dict, **kwargs) -> str:
 
 def outlook_add_attendees(args: dict, **kwargs) -> str:
     """Add attendees to an existing event."""
-    event_id  = args.get("event_id", "")
-    attendees = args.get("attendees", "")
-    log.info("outlook_add_attendees: event_id=%s attendees=%r", event_id, attendees)
+    event_id      = args.get("event_id", "")
+    attendees     = args.get("attendees", "")
+    attendee_type = args.get("attendee_type", "Required")
+    log.info("outlook_add_attendees: event_id=%s attendees=%r type=%s", event_id, attendees, attendee_type)
     try:
+        if attendee_type not in ("Required", "Optional", "Resource"):
+            attendee_type = "Required"
         existing      = _api("GET", f"/me/events/{event_id}?$select=Attendees")
         current       = existing.get("Attendees", [])
         current_emails = {a.get("EmailAddress", {}).get("Address", "").lower() for a in current}
@@ -820,11 +826,38 @@ def outlook_add_attendees(args: dict, **kwargs) -> str:
         to_add        = [em for em in new_emails if em.lower() not in current_emails]
         if not to_add:
             return json.dumps({"status": "ok", "id": event_id, "added": [], "note": "All attendees already on the event"})
-        updated = current + [{"EmailAddress": {"Address": em}, "Type": "Required"} for em in to_add]
+        updated = current + [{"EmailAddress": {"Address": em}, "Type": attendee_type} for em in to_add]
         _api("PATCH", f"/me/events/{event_id}", {"Attendees": updated})
         return json.dumps({"status": "ok", "id": event_id, "added": to_add})
     except Exception as e:
         log.warning("outlook_add_attendees error: event_id=%s %s", event_id, e)
+        return json.dumps({"error": str(e)})
+
+
+def outlook_set_attendee_type(args: dict, **kwargs) -> str:
+    """Change the Required/Optional/Resource type of one or more existing attendees on an event."""
+    event_id      = args.get("event_id", "")
+    attendees     = args.get("attendees", "")
+    attendee_type = args.get("attendee_type", "Optional")
+    log.info("outlook_set_attendee_type: event_id=%s attendees=%r type=%s", event_id, attendees, attendee_type)
+    try:
+        if attendee_type not in ("Required", "Optional", "Resource"):
+            return json.dumps({"error": f"Invalid attendee_type '{attendee_type}'. Use: Required, Optional, Resource"})
+        existing   = _api("GET", f"/me/events/{event_id}?$select=Attendees")
+        current    = existing.get("Attendees", [])
+        target_set = {e.strip().lower() for e in attendees.split(",") if e.strip()} if attendees else None
+        updated = []
+        changed = []
+        for a in current:
+            addr = a.get("EmailAddress", {}).get("Address", "")
+            if target_set is None or addr.lower() in target_set:
+                a = {**a, "Type": attendee_type}
+                changed.append(addr)
+            updated.append(a)
+        _api("PATCH", f"/me/events/{event_id}", {"Attendees": updated})
+        return json.dumps({"status": "ok", "id": event_id, "updated": changed, "type": attendee_type})
+    except Exception as e:
+        log.warning("outlook_set_attendee_type error: event_id=%s %s", event_id, e)
         return json.dumps({"error": str(e)})
 
 

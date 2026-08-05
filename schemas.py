@@ -230,6 +230,7 @@ CREATE_EVENT = {
             "start":      {"type": "string",  "description": "Start datetime. Prefer natural-language: 'next Monday at 10am', 'tomorrow at 2pm'. ISO also accepted."},
             "end":        {"type": "string",  "description": "End datetime. Same format as start."},
             "attendees":  {"type": "string",  "description": "Comma-separated email addresses to invite (optional)."},
+            "attendee_type": {"type": "string", "description": "Type for all invited attendees: \"Required\" (default), \"Optional\", or \"Resource\"."},
             "location":   {"type": "string",  "description": "Location string (room name, address, or Teams link)."},
             "body":       {"type": "string",  "description": "Event description/notes (plain text)."},
             "is_online":  {"type": "boolean", "description": "If true, create as an online Teams meeting (default false)."},
@@ -368,8 +369,27 @@ ADD_ATTENDEES = {
         "properties": {
             "event_id":  {"type": "string", "description": "The event ID."},
             "attendees": {"type": "string", "description": "Comma-separated email addresses to add."},
+            "attendee_type": {"type": "string", "description": "Type for the added attendees: \"Required\" (default), \"Optional\", or \"Resource\"."},
         },
         "required": ["event_id", "attendees"],
+    },
+}
+
+SET_ATTENDEE_TYPE = {
+    "name": "outlook_set_attendee_type",
+    "description": (
+        "Change the Required/Optional/Resource type of one or more existing attendees on an event, "
+        "without removing and re-adding them. Useful for matching an event's attendee types to a template event. "
+        "Returns: {\"status\": \"ok\", \"id\": \"...\", \"updated\": [...], \"type\": \"...\"} or {\"error\": \"...\"}."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "event_id":      {"type": "string", "description": "The event ID."},
+            "attendees":     {"type": "string", "description": "Comma-separated email addresses to update. Leave blank to apply to ALL attendees on the event."},
+            "attendee_type": {"type": "string", "description": "New type: \"Required\", \"Optional\", or \"Resource\" (default \"Optional\")."},
+        },
+        "required": ["event_id"],
     },
 }
 

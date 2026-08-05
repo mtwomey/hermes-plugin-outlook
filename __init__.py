@@ -38,6 +38,7 @@ def register(ctx):
         (schemas.LIST_CALENDARS,     tools.outlook_list_calendars),
         (schemas.GET_SCHEDULE,       tools.outlook_get_schedule),
         (schemas.ADD_ATTENDEES,      tools.outlook_add_attendees),
+        (schemas.SET_ATTENDEE_TYPE,  tools.outlook_set_attendee_type),
         (schemas.REMOVE_ATTENDEES,   tools.outlook_remove_attendees),
     ]
 
