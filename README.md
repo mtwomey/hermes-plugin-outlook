@@ -14,8 +14,8 @@ manual fallback script) and rotates automatically at runtime between renewals.
 ## Requirements
 
 - macOS (uses Keychain for credential storage)
-- Chrome or Edge browser, logged into `https://outlook.office.com` as `mattwo01@roberthalf.com`
 - Hermes Agent installed
+- For token renewal: Hermes's browser tool signed into `mattwo01@roberthalf.com` (the agent drives this interactively as needed — see Credential Setup / Token Renewal below)
 
 ---
 
@@ -24,9 +24,10 @@ manual fallback script) and rotates automatically at runtime between renewals.
 ```bash
 cd ~/Git_Repos/hermes-plugin-outlook
 
-# Step 1 — Extract credentials from your browser (see below)
-# Step 2 — Run setup (reads credentials from clipboard automatically)
+# Step 1 — Run setup (symlinks the plugin + prompts for credentials)
 ./setup.sh install
+# Step 2 — If prompted for a refresh_token you don't have yet, see
+#          "Credential Setup / Token Renewal" below
 
 # Step 3 — Restart Hermes
 ```
