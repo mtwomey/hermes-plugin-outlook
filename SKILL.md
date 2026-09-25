@@ -16,6 +16,21 @@ triggers:
 
 # Outlook Plugin
 
+## Modifying this plugin (read before changing any tool)
+
+Live tools come from **this** repo (`~/Git_Repos/hermes-plugin-outlook`):
+- `tools.py` — handler bodies, signature `def outlook_send_email(args: dict, **kwargs)`
+- `schemas.py` — per-tool schema constants (`SEND_EMAIL`, `LIST_EMAILS`, …), **not** a `TOOL_SCHEMAS` list
+
+A new parameter must be added to **both** files, or it compiles fine and is silently uncallable.
+
+`~/Git_Repos/hermes-skill-outlook/scripts/outlook_server.py` is a **superseded MCP server** — editing it changes nothing at runtime. Confirm the real target with
+`grep -n "def outlook_send_email" ~/Git_Repos/hermes-plugin-outlook/tools.py` before patching.
+
+**Native plugins load in-process at startup — there is no hot-reload.** Code changes require a full Hermes restart. After restarting, confirm the reload landed via `tool_describe("outlook_send_email")` and check the new parameter is present before relying on it.
+
+Note that `skill_manage` cannot patch this skill (it is plugin-provided, not in `~/.hermes/skills/`); edit this file directly.
+
 ## Overview
 
 Manages **Robert Half Outlook** (mattwo01@roberthalf.com) email and calendar.
@@ -40,6 +55,24 @@ authentication — no Azure AD app registration required.
 | `outlook_renew_token_start` | Begin renewing the refresh token — returns an auth_url for the agent to navigate to |
 | `outlook_renew_token_finish` | Complete renewal by exchanging the captured redirect URL for a fresh token |
 
+**Token lifetime:** the refresh token is issued to a single-page app and has a hard
+**24-hour** lifetime that cannot be extended. A daily `invalid_grant` /
+`AADSTS700084` is expected behavior, not a misconfiguration.
+
+**Renewal procedure that works:**
+1. `outlook_renew_token_start` → returns `auth_url`
+2. Drive that URL with the **playwright-extension** tools. `browser_exec` with
+   `local=true` fails outright when the default browser is not Chromium
+   (`browser.use_real_profile` error) — do not retry it, switch tools.
+3. On the "Pick an account" screen, the target account may show *Signed in* — clicking
+   it can complete the whole flow with no password prompt.
+4. The snapshot `ref` often goes stale mid-click because the page already redirected.
+   That is success, not failure: re-snapshot and read the URL.
+5. An Outlook **mail-app error page** after the redirect is irrelevant (it is OWA
+   failing to load, not auth). What matters is the `#code=...` fragment in the URL.
+6. `outlook_renew_token_finish` with that full URL **immediately** — the code expires
+   in ~2 minutes.
+
 ### Email
 | Tool | Description |
 |---|---|
@@ -49,7 +82,7 @@ authentication — no Azure AD app registration required.
 | `outlook_list_folders` | List all mailbox folders |
 | `outlook_mark_read` | Mark an email as read |
 | `outlook_move_email` | Move email to another folder |
-| `outlook_send_email` | Compose and send a new email |
+| `outlook_send_email` | Compose and send a new email (supports `attachments`) |
 | `outlook_reply_email` | Reply to an email (sender or reply-all) |
 | `outlook_forward_email` | Forward an email to new recipients |
 
@@ -94,6 +127,9 @@ outlook_search_emails(query="quarterly review")
 ```
 # New email
 outlook_send_email(to="bob@example.com", subject="Hello", body="Hi Bob!")
+# With attachments — comma-separated local paths
+outlook_send_email(to="bob@example.com", subject="Report",
+                   body="Attached.", attachments="/path/a.pdf,/path/b.xlsx")
 # Reply to sender only
 outlook_reply_email(email_id="<id>", body="Thanks!")
 # Reply-all
@@ -101,6 +137,15 @@ outlook_reply_email(email_id="<id>", body="Got it, everyone.", reply_all=true)
 # Forward
 outlook_forward_email(email_id="<id>", to="mgr@company.com", comment="FYI")
 ```
+
+**Attachments:** files are base64-encoded into Graph `FileAttachment` objects.
+Graph rejects sendMail payloads over ~4 MB and base64 inflates raw bytes by ~33%,
+so the guard trips at ~3 MB raw — above that, send a share link instead.
+A missing path returns a clear error rather than a Graph 400.
+
+After sending anything important, verify it by reading the message back from
+`sentitems` and checking its `attachments` field. The tool's own success message
+confirms the API accepted the call, not that the file rode along.
 
 ### Calendar events
 ```
