@@ -125,6 +125,7 @@ SEND_EMAIL = {
             "bcc":          {"type": "string",  "description": "Comma-separated BCC addresses (optional)."},
             "body_type":    {"type": "string",  "description": "\"Text\" (default) or \"HTML\"."},
             "save_to_sent": {"type": "boolean", "description": "Save a copy to Sent Items (default true)."},
+            "attachments":  {"type": "string",  "description": "Comma-separated local file paths to attach (optional). Total raw size must stay under ~3 MB."},
         },
         "required": ["to", "subject", "body"],
     },

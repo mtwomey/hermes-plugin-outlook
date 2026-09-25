@@ -546,7 +546,8 @@ def outlook_send_email(args: dict, **kwargs) -> str:
     bcc          = args.get("bcc", "")
     body_type    = args.get("body_type", "Text")
     save_to_sent = bool(args.get("save_to_sent", True))
-    log.info("outlook_send_email: to=%r subject=%r", to, subject)
+    attachments  = args.get("attachments", "")
+    log.info("outlook_send_email: to=%r subject=%r attachments=%r", to, subject, attachments)
     try:
         def _addrs(csv: str) -> list:
             return [{"EmailAddress": {"Address": a.strip()}} for a in csv.split(",") if a.strip()]
@@ -561,8 +562,41 @@ def outlook_send_email(args: dict, **kwargs) -> str:
         if bcc:
             message["BccRecipients"] = _addrs(bcc)
 
+        if attachments:
+            import base64
+            import mimetypes
+            import os
+
+            atts = []
+            total = 0
+            for raw in attachments.split(","):
+                path = os.path.expanduser(raw.strip())
+                if not path:
+                    continue
+                if not os.path.isfile(path):
+                    return json.dumps({"error": f"Attachment not found: {path}"})
+                with open(path, "rb") as fh:
+                    data = fh.read()
+                total += len(data)
+                ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+                atts.append({
+                    "@odata.type":  "#Microsoft.OutlookServices.FileAttachment",
+                    "Name":         os.path.basename(path),
+                    "ContentType":  ctype,
+                    "ContentBytes": base64.b64encode(data).decode("ascii"),
+                })
+            # Graph rejects sendMail payloads over ~4 MB; base64 inflates raw size by ~33%.
+            if total * 4 / 3 > 3_000_000:
+                return json.dumps({
+                    "error": f"Attachments total {total:,} bytes raw, which exceeds the "
+                             f"~3 MB sendMail limit once base64-encoded. "
+                             f"Send a share link instead."
+                })
+            message["Attachments"] = atts
+
         _api("POST", "/me/sendmail", {"Message": message, "SaveToSentItems": save_to_sent})
-        return json.dumps({"status": "ok", "message": f"Email sent to {to}"})
+        note = f" with {len(message['Attachments'])} attachment(s)" if attachments else ""
+        return json.dumps({"status": "ok", "message": f"Email sent to {to}{note}"})
     except Exception as e:
         log.warning("outlook_send_email error: to=%s %s", to, e)
         return json.dumps({"error": str(e)})
